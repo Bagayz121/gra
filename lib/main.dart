@@ -8,6 +8,7 @@ const String boxSetetings = 'app_settings_box';
 
 const String keyGameTemplate = 'default_criteria_game';
 const String keyAnimeTemplate = 'default_criteria_anime';
+const String keyMangaTemplate = 'default_criteria_manga';
 
 const List<String> allAvailableGenres = [
   'Action',
@@ -27,6 +28,12 @@ const List<String> allAvailableGenres = [
   'Sci-Fi',
   'Fantasy',
 ];
+
+IconData iconByType(String type) {
+  return type == 'game'
+      ? Icons.videogame_asset
+      : (type == 'anime' ? Icons.tv : Icons.library_books);
+}
 
 // Миграция для старых данных
 Future<void> migrateData() async {
@@ -77,6 +84,9 @@ void main() async {
   }
   if (settings.get(keyAnimeTemplate) == null) {
     settings.put(keyAnimeTemplate, ['Анимация', 'Сюжет', 'Персонажи', 'Звук']);
+  }
+  if (settings.get(keyMangaTemplate) == null) {
+    settings.put(keyMangaTemplate, ['Рисовка', 'Сюжет', 'Персонажи', 'Звук']);
   }
 
   runApp(const GameReviewApp());
@@ -218,7 +228,7 @@ class _MainScreenState extends State<MainScreen> {
       itemBuilder: (context, index) {
         final item = Map<String, dynamic>.from(items[index]);
         final realIndex = all.indexOf(items[index]);
-        final isAnime = item['type'] == 'anime';
+        final String type = item['type'];
         return Card(
           child: ListTile(
             onTap: () => Navigator.push(
@@ -228,13 +238,10 @@ class _MainScreenState extends State<MainScreen> {
                     ReviewDetailScreen(data: item, index: realIndex),
               ),
             ),
-            leading: Icon(
-              isAnime ? Icons.tv : Icons.videogame_asset,
-              color: Colors.cyan,
-            ),
+            leading: Icon(iconByType(type), color: Colors.cyan),
             title: Text(item['title']),
             subtitle: Text(
-              "${isAnime ? 'Аниме' : 'Игра'} • ${isAnime ? (item['episodes'] ?? '0') + ' сер.' : (item['playTime'] ?? '0 ч.')}",
+              "${type == 'anime' ? 'Аниме' : (type == 'game' ? 'Игра' : 'Манга')} • ${type == 'anime' ? (item['episodes'] ?? '0') + ' сер.' : (type == 'game' ? (item['playTime'] ?? '0 ч.') : (item['chapters'] ?? '0') + ' гл.')}",
             ),
             trailing: _getStatusIcon(item['status']),
           ),
@@ -272,11 +279,7 @@ class _MainScreenState extends State<MainScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  item['type'] == 'anime' ? Icons.tv : Icons.videogame_asset,
-                  size: 40,
-                  color: Colors.cyan,
-                ),
+                Icon(iconByType(item['type']), size: 40, color: Colors.cyan),
                 const Spacer(),
                 Text(
                   item['title'],
@@ -322,7 +325,7 @@ class AddReviewForm extends StatefulWidget {
 
 class _AddReviewFormState extends State<AddReviewForm> {
   final _titleController = TextEditingController();
-  String type = 'game'; // 'game' or 'anime'
+  String type = 'game'; // 'game' or 'anime' or 'manga'
   String status = 'Neutral';
 
   @override
@@ -349,6 +352,11 @@ class _AddReviewFormState extends State<AddReviewForm> {
                 label: Text('Аниме'),
                 icon: Icon(Icons.tv),
               ),
+              ButtonSegment(
+                value: 'manga',
+                label: Text('Манга'),
+                icon: Icon(Icons.library_books),
+              ),
             ],
             selected: {type},
             onSelectionChanged: (val) => setState(() => type = val.first),
@@ -367,7 +375,7 @@ class _AddReviewFormState extends State<AddReviewForm> {
               if (_titleController.text.isEmpty) return;
               final templateKey = type == 'game'
                   ? keyGameTemplate
-                  : keyAnimeTemplate;
+                  : (type == 'anime' ? keyAnimeTemplate : keyMangaTemplate);
               final List<String> template = List<String>.from(
                 Hive.box(boxTemplateSettings).get(templateKey),
               );
@@ -378,6 +386,7 @@ class _AddReviewFormState extends State<AddReviewForm> {
                 'genres': <String>[],
                 'playTime': '',
                 'episodes': '',
+                'chapters': '',
                 'status': status,
                 'dateTime': DateTime.now().toString(),
                 'criteria': template
@@ -413,7 +422,7 @@ class ReviewDetailScreen extends StatefulWidget {
 
 class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
   late Map<String, dynamic> data;
-  late TextEditingController _mainValController; // Для часов или серий
+  late TextEditingController _mainValController; // Для часов или серий или глав
   late TextEditingController _finalOpinionController;
 
   @override
@@ -421,7 +430,10 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
     super.initState();
     data = Map<String, dynamic>.from(widget.data);
     _mainValController = TextEditingController(
-      text: data[data['type'] == 'anime' ? 'episodes' : 'playTime'],
+      text:
+          data[data['type'] == 'anime'
+              ? 'episodes'
+              : (data['type'] == 'game' ? 'playTime' : 'chapters')],
     );
     _finalOpinionController = TextEditingController(text: data['finalOpinion']);
   }
@@ -430,14 +442,13 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAnime = data['type'] == 'anime';
     return Scaffold(
       appBar: AppBar(title: Text(data['title'])),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _buildInfoCard(isAnime),
+            _buildInfoCard(data['type']),
             const SizedBox(height: 20),
             _buildCriteriaSection(),
             const SizedBox(height: 20),
@@ -463,7 +474,7 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
     );
   }
 
-  Widget _buildInfoCard(bool isAnime) {
+  Widget _buildInfoCard(String type) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -493,11 +504,22 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
             TextField(
               controller: _mainValController,
               decoration: InputDecoration(
-                labelText: isAnime ? 'Количество серий' : 'Время прохождения',
-                prefixIcon: Icon(isAnime ? Icons.repeat : Icons.timer),
+                labelText: type == 'anime'
+                    ? 'Количество серий'
+                    : (type == 'game'
+                          ? 'Время прохождения'
+                          : 'Количество глав'),
+                prefixIcon: Icon(
+                  type == 'anime' || type == 'manga'
+                      ? Icons.repeat
+                      : Icons.timer,
+                ),
               ),
               onChanged: (v) {
-                data[isAnime ? 'episodes' : 'playTime'] = v;
+                data[type == 'anime'
+                        ? 'episodes'
+                        : (type == 'game' ? 'playTime' : 'chapters')] =
+                    v;
                 _save();
               },
             ),
@@ -626,7 +648,7 @@ class TemplateSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Настройка шаблонов'),
@@ -634,6 +656,7 @@ class TemplateSettingsScreen extends StatelessWidget {
             tabs: [
               Tab(text: 'Игры'),
               Tab(text: 'Аниме'),
+              Tab(text: 'Манга'),
             ],
           ),
         ),
@@ -641,6 +664,7 @@ class TemplateSettingsScreen extends StatelessWidget {
           children: [
             TemplateEditor(templateKey: keyGameTemplate),
             TemplateEditor(templateKey: keyAnimeTemplate),
+            TemplateEditor(templateKey: keyMangaTemplate),
           ],
         ),
       ),
