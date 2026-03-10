@@ -3,41 +3,57 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 // --- КОНСТАНТЫ ---
 const String boxGames = 'games_box';
-const String boxSettings = 'settings_box';
-const String keyTemplate = 'default_criteria';
+const String boxTemplateSettings = 'settings_box';
+const String boxSetetings = 'app_settings_box';
+
+const String keyGameTemplate = 'default_criteria_game';
+const String keyAnimeTemplate = 'default_criteria_anime';
 
 const List<String> allAvailableGenres = [
   'Action',
   'RPG',
   'Shooter',
   'Adventure',
+  'OpenWorld',
+  'Metroidvania',
+  'Platformer',
+  'TBC',
   'Indie',
   'Strategy',
-  'Simulation',
   'Horror',
   'Puzzle',
-  'Platformer',
-  'Racing',
-  'Sports',
+  'Comedy',
+  'Drama',
+  'Sci-Fi',
+  'Fantasy',
 ];
 
-Future<void> migrateGenresIfNeeded() async {
+// Миграция для старых данных
+Future<void> migrateData() async {
   final box = Hive.box(boxGames);
   for (int i = 0; i < box.length; i++) {
-    final game = box.getAt(i);
-    if (game != null && game['genres'] is String) {
-      String oldGenres = game['genres'] as String;
+    final item = box.getAt(i);
+    if (item == null) continue;
+    final Map<String, dynamic> updated = Map<String, dynamic>.from(item);
+    bool changed = false;
 
-      List<String> newGenres = oldGenres
+    // Проставляем тип 'game' старым записям
+    if (updated['type'] == null) {
+      updated['type'] = 'game';
+      changed = true;
+    }
+    // Старая миграция жанров
+    if (updated['genres'] is String) {
+      String oldGenres = updated['genres'] as String;
+      updated['genres'] = oldGenres
           .split(',')
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toList();
-
-      final updatedGame = Map<String, dynamic>.from(game);
-      updatedGame['genres'] = newGenres;
-      await box.putAt(i, updatedGame);
+      changed = true;
     }
+
+    if (changed) await box.putAt(i, updated);
   }
 }
 
@@ -45,13 +61,22 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
   await Hive.openBox(boxGames);
-  await Hive.openBox(boxSettings);
+  await Hive.openBox(boxSetetings);
+  await Hive.openBox(boxTemplateSettings);
 
-  await migrateGenresIfNeeded();
+  await migrateData();
 
-  final settings = Hive.box(boxSettings);
-  if (settings.get(keyTemplate) == null) {
-    settings.put(keyTemplate, ['Геймплей', 'Сюжет', 'Графика', 'Оптимизация']);
+  final settings = Hive.box(boxTemplateSettings);
+  if (settings.get(keyGameTemplate) == null) {
+    settings.put(keyGameTemplate, [
+      'Геймплей',
+      'Сюжет',
+      'Графика',
+      'Оптимизация',
+    ]);
+  }
+  if (settings.get(keyAnimeTemplate) == null) {
+    settings.put(keyAnimeTemplate, ['Анимация', 'Сюжет', 'Персонажи', 'Звук']);
   }
 
   runApp(const GameReviewApp());
@@ -63,7 +88,7 @@ class GameReviewApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GameTracker',
+      title: 'Reviewer',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -77,52 +102,40 @@ class GameReviewApp extends StatelessWidget {
   }
 }
 
-// --- ENUM для сортировки ---
 enum SortMode { dateDesc, dateAsc, liked, disliked, neutral }
 
 // --- ГЛАВНЫЙ ЭКРАН ---
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
-
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
   bool isGridView = false;
-  String searchQuery = "";
+  String searchQuery = '';
   SortMode sortMode = SortMode.dateDesc;
   final Box gamesBox = Hive.box(boxGames);
   final TextEditingController _searchController = TextEditingController();
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  List<dynamic> _getSortedAndFiltered(List<dynamic> games) {
-    // Фильтрация по поиску
-    var result = games.where((g) {
+  List<dynamic> _getSortedAndFiltered(List<dynamic> items) {
+    var result = items.where((g) {
       final title = (g['title'] ?? '').toString().toLowerCase();
       return title.contains(searchQuery.toLowerCase());
     }).toList();
 
-    // Сортировка
     switch (sortMode) {
       case SortMode.dateDesc:
-        result.sort((a, b) {
-          final da = DateTime.tryParse(a['dateTime'] ?? '') ?? DateTime(0);
-          final db = DateTime.tryParse(b['dateTime'] ?? '') ?? DateTime(0);
-          return db.compareTo(da);
-        });
+        result.sort(
+          (a, b) => (DateTime.tryParse(b['dateTime'] ?? '') ?? DateTime(0))
+              .compareTo(DateTime.tryParse(a['dateTime'] ?? '') ?? DateTime(0)),
+        );
         break;
       case SortMode.dateAsc:
-        result.sort((a, b) {
-          final da = DateTime.tryParse(a['dateTime'] ?? '') ?? DateTime(0);
-          final db = DateTime.tryParse(b['dateTime'] ?? '') ?? DateTime(0);
-          return da.compareTo(db);
-        });
+        result.sort(
+          (a, b) => (DateTime.tryParse(a['dateTime'] ?? '') ?? DateTime(0))
+              .compareTo(DateTime.tryParse(b['dateTime'] ?? '') ?? DateTime(0)),
+        );
         break;
       case SortMode.liked:
         result = result.where((g) => g['status'] == 'Like').toList();
@@ -134,105 +147,22 @@ class _MainScreenState extends State<MainScreen> {
         result = result.where((g) => g['status'] == 'Neutral').toList();
         break;
     }
-
     return result;
-  }
-
-  void _showSortMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Сортировка и фильтр',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-            _sortTile(
-              ctx,
-              SortMode.dateDesc,
-              Icons.arrow_downward,
-              'Сначала новые',
-            ),
-            _sortTile(
-              ctx,
-              SortMode.dateAsc,
-              Icons.arrow_upward,
-              'Сначала старые',
-            ),
-            _sortTile(
-              ctx,
-              SortMode.liked,
-              Icons.sentiment_very_satisfied,
-              'Только понравившиеся',
-              Colors.greenAccent,
-            ),
-            _sortTile(
-              ctx,
-              SortMode.disliked,
-              Icons.sentiment_very_dissatisfied,
-              'Только не понравившиеся',
-              Colors.redAccent,
-            ),
-            _sortTile(
-              ctx,
-              SortMode.neutral,
-              Icons.sentiment_neutral,
-              'Только нейтральные',
-              Colors.orangeAccent,
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _sortTile(
-    BuildContext ctx,
-    SortMode mode,
-    IconData icon,
-    String label, [
-    Color? color,
-  ]) {
-    final isSelected = sortMode == mode;
-    return ListTile(
-      leading: Icon(icon, color: color ?? (isSelected ? Colors.cyan : null)),
-      title: Text(label),
-      trailing: isSelected ? const Icon(Icons.check, color: Colors.cyan) : null,
-      onTap: () {
-        setState(() => sortMode = mode);
-        Navigator.pop(ctx);
-      },
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Games'),
+        title: const Text('My Reviews'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.book_rounded),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (c) => const SettingsScreen()),
+              MaterialPageRoute(builder: (c) => const TemplateSettingsScreen()),
             ),
-          ),
-          IconButton(
-            icon: Icon(
-              sortMode != SortMode.dateDesc
-                  ? Icons.filter_list
-                  : Icons.filter_list_off,
-              color: sortMode != SortMode.dateDesc ? Colors.cyan : null,
-            ),
-            onPressed: () => _showSortMenu(context),
-            tooltip: 'Сортировка',
+            tooltip: 'Шаблоны',
           ),
           IconButton(
             icon: Icon(isGridView ? Icons.view_list : Icons.grid_view),
@@ -246,25 +176,13 @@ class _MainScreenState extends State<MainScreen> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Поиск игры...',
+                hintText: 'Поиск...',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => searchQuery = '');
-                        },
-                      )
-                    : null,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(30),
                 ),
                 filled: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  vertical: 0,
-                  horizontal: 16,
-                ),
+                contentPadding: EdgeInsets.zero,
               ),
               onChanged: (v) => setState(() => searchQuery = v),
             ),
@@ -274,125 +192,100 @@ class _MainScreenState extends State<MainScreen> {
       body: ValueListenableBuilder(
         valueListenable: gamesBox.listenable(),
         builder: (context, Box box, _) {
-          final allGames = box.values.toList();
-          final games = _getSortedAndFiltered(allGames);
-
-          if (allGames.isEmpty) {
-            return const Center(child: Text('Пусто... Добавь первую игру!'));
-          }
-
-          if (games.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.search_off, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  Text(
-                    searchQuery.isNotEmpty
-                        ? 'Игры не найдены по запросу "$searchQuery"'
-                        : 'Нет игр в этой категории',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                ],
-              ),
-            );
-          }
-
+          final items = _getSortedAndFiltered(box.values.toList());
+          if (box.isEmpty) return const Center(child: Text('Пусто...'));
           return isGridView
-              ? _buildGrid(games, allGames)
-              : _buildList(games, allGames);
+              ? _buildGrid(items, box.values.toList())
+              : _buildList(items, box.values.toList());
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openAddGameSheet(context),
+        onPressed: () => showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          builder: (ctx) => const AddReviewForm(),
+        ),
         label: const Text('Добавить'),
         icon: const Icon(Icons.add),
       ),
     );
   }
 
-  Widget _buildGrid(List<dynamic> games, List<dynamic> allGames) {
-    return GridView.builder(
+  Widget _buildList(List<dynamic> items, List<dynamic> all) {
+    return ListView.builder(
       padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        mainAxisExtent: 260,
-      ),
-      itemCount: games.length,
+      itemCount: items.length,
       itemBuilder: (context, index) {
-        final game = Map<String, dynamic>.from(games[index]);
-        final realIndex = allGames.indexWhere(
-          (g) =>
-              g['title'] == game['title'] && g['dateTime'] == game['dateTime'],
-        );
-        return InkWell(
-          onTap: () => _openGameDetails(context, games[index], realIndex),
-          borderRadius: BorderRadius.circular(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.grey[900],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Center(
-                    child: _getStatusIcon(game['status'], size: 40),
-                  ),
-                ),
+        final item = Map<String, dynamic>.from(items[index]);
+        final realIndex = all.indexOf(items[index]);
+        final isAnime = item['type'] == 'anime';
+        return Card(
+          child: ListTile(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) =>
+                    ReviewDetailScreen(data: item, index: realIndex),
               ),
-              Padding(
-                padding: const EdgeInsets.only(top: 8, left: 4),
-                child: Text(
-                  game['title'],
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 4),
-                child: Text(
-                  game['playTime']?.isNotEmpty == true
-                      ? game['playTime']
-                      : 'Время не указано',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ),
-            ],
+            ),
+            leading: Icon(
+              isAnime ? Icons.tv : Icons.videogame_asset,
+              color: Colors.cyan,
+            ),
+            title: Text(item['title']),
+            subtitle: Text(
+              "${isAnime ? 'Аниме' : 'Игра'} • ${isAnime ? (item['episodes'] ?? '0') + ' сер.' : (item['playTime'] ?? '0 ч.')}",
+            ),
+            trailing: _getStatusIcon(item['status']),
           ),
         );
       },
     );
   }
 
-  Widget _buildList(List<dynamic> games, List<dynamic> allGames) {
-    return ListView.builder(
+  Widget _buildGrid(List<dynamic> items, List<dynamic> all) {
+    return GridView.builder(
       padding: const EdgeInsets.all(12),
-      itemCount: games.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisExtent: 240,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: items.length,
       itemBuilder: (context, index) {
-        final game = Map<String, dynamic>.from(games[index]);
-        final realIndex = allGames.indexWhere(
-          (g) =>
-              g['title'] == game['title'] && g['dateTime'] == game['dateTime'],
-        );
-        return Card(
-          child: ListTile(
-            onTap: () => _openGameDetails(context, games[index], realIndex),
-            leading: CircleAvatar(
-              backgroundColor: Colors.black26,
-              child: _getStatusIcon(game['status']),
+        final item = Map<String, dynamic>.from(items[index]);
+        final realIndex = all.indexOf(items[index]);
+        return InkWell(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (c) => ReviewDetailScreen(data: item, index: realIndex),
             ),
-            title: Text(game['title']),
-            subtitle: Text(
-              "${(game['genres'] as List).isEmpty ? 'Жанры не указаны' : (game['genres'] as List).join(', ')} • ${game['playTime']?.isNotEmpty == true ? game['playTime'] : 'Время не указано'}",
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.grey[900],
+              borderRadius: BorderRadius.circular(12),
             ),
-            trailing: const Icon(Icons.chevron_right),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  item['type'] == 'anime' ? Icons.tv : Icons.videogame_asset,
+                  size: 40,
+                  color: Colors.cyan,
+                ),
+                const Spacer(),
+                Text(
+                  item['title'],
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  maxLines: 2,
+                ),
+                _getStatusIcon(item['status'], size: 20),
+              ],
+            ),
           ),
         );
       },
@@ -400,169 +293,37 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _getStatusIcon(String? status, {double size = 24}) {
-    switch (status) {
-      case 'Like':
-        return Icon(
-          Icons.sentiment_very_satisfied,
-          color: Colors.greenAccent,
-          size: size,
-        );
-      case 'Dislike':
-        return Icon(
-          Icons.sentiment_very_dissatisfied,
-          color: Colors.redAccent,
-          size: size,
-        );
-      default:
-        return Icon(
-          Icons.sentiment_neutral,
-          color: Colors.orangeAccent,
-          size: size,
-        );
-    }
-  }
-
-  void _openAddGameSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => const AddGameForm(),
-    );
-  }
-
-  void _openGameDetails(BuildContext context, dynamic data, int index) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (c) => GameDetailScreen(gameData: data, gameIndex: index),
-      ),
-    );
-  }
-}
-
-// --- ЭКРАН НАСТРОЕК ШАБЛОНА ---
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  final Box settings = Hive.box(boxSettings);
-  late List<String> currentCriteria;
-  // Контроллеры для каждого поля
-  late List<TextEditingController> _controllers;
-
-  @override
-  void initState() {
-    super.initState();
-    currentCriteria = List<String>.from(settings.get(keyTemplate) ?? []);
-    _controllers = currentCriteria
-        .map((c) => TextEditingController(text: c))
-        .toList();
-  }
-
-  @override
-  void dispose() {
-    for (final c in _controllers) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _addCriterion() {
-    final newVal = "Новый критерий";
-    setState(() {
-      currentCriteria.add(newVal);
-      _controllers.add(TextEditingController(text: newVal));
-    });
-    settings.put(keyTemplate, currentCriteria);
-  }
-
-  void _removeCriterion(int index) {
-    _controllers[index].dispose();
-    setState(() {
-      currentCriteria.removeAt(index);
-      _controllers.removeAt(index);
-    });
-    settings.put(keyTemplate, currentCriteria);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Шаблон критериев')),
-      body: currentCriteria.isEmpty
-          ? const Center(
-              child: Text(
-                'Нет критериев.\nНажмите + чтобы добавить.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-            )
-          : ReorderableListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: currentCriteria.length,
-              onReorder: (oldIndex, newIndex) {
-                setState(() {
-                  if (newIndex > oldIndex) newIndex--;
-                  final item = currentCriteria.removeAt(oldIndex);
-                  final ctrl = _controllers.removeAt(oldIndex);
-                  currentCriteria.insert(newIndex, item);
-                  _controllers.insert(newIndex, ctrl);
-                });
-                settings.put(keyTemplate, currentCriteria);
-              },
-              itemBuilder: (context, index) {
-                return Card(
-                  key: ValueKey('criterion_$index'),
-                  child: ListTile(
-                    leading: const Icon(Icons.drag_handle, color: Colors.grey),
-                    title: TextField(
-                      controller: _controllers[index],
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        hintText: 'Название критерия',
-                      ),
-                      onChanged: (v) {
-                        currentCriteria[index] = v;
-                        settings.put(keyTemplate, currentCriteria);
-                      },
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () => _removeCriterion(index),
-                    ),
-                  ),
-                );
-              },
-            ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addCriterion,
-        child: const Icon(Icons.add),
-      ),
+    if (status == 'Like')
+      return Icon(
+        Icons.sentiment_very_satisfied,
+        color: Colors.greenAccent,
+        size: size,
+      );
+    if (status == 'Dislike')
+      return Icon(
+        Icons.sentiment_very_dissatisfied,
+        color: Colors.redAccent,
+        size: size,
+      );
+    return Icon(
+      Icons.sentiment_neutral,
+      color: Colors.orangeAccent,
+      size: size,
     );
   }
 }
 
 // --- ФОРМА ДОБАВЛЕНИЯ ---
-class AddGameForm extends StatefulWidget {
-  const AddGameForm({super.key});
-
+class AddReviewForm extends StatefulWidget {
+  const AddReviewForm({super.key});
   @override
-  State<AddGameForm> createState() => _AddGameFormState();
+  State<AddReviewForm> createState() => _AddReviewFormState();
 }
 
-class _AddGameFormState extends State<AddGameForm> {
+class _AddReviewFormState extends State<AddReviewForm> {
   final _titleController = TextEditingController();
+  String type = 'game'; // 'game' or 'anime'
   String status = 'Neutral';
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -576,51 +337,47 @@ class _AddGameFormState extends State<AddGameForm> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            'Новая игра',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _titleController,
-            decoration: const InputDecoration(labelText: 'Название игры *'),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _statusButton(
-                'Like',
-                Icons.sentiment_very_satisfied,
-                Colors.greenAccent,
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'game',
+                label: Text('Игра'),
+                icon: Icon(Icons.videogame_asset),
               ),
-              _statusButton(
-                'Neutral',
-                Icons.sentiment_neutral,
-                Colors.orangeAccent,
-              ),
-              _statusButton(
-                'Dislike',
-                Icons.sentiment_very_dissatisfied,
-                Colors.redAccent,
+              ButtonSegment(
+                value: 'anime',
+                label: Text('Аниме'),
+                icon: Icon(Icons.tv),
               ),
             ],
+            selected: {type},
+            onSelectionChanged: (val) => setState(() => type = val.first),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _titleController,
+            decoration: const InputDecoration(labelText: 'Название *'),
+          ),
+          const SizedBox(height: 16),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               minimumSize: const Size(double.infinity, 50),
             ),
             onPressed: () {
-              if (_titleController.text.trim().isEmpty) return;
+              if (_titleController.text.isEmpty) return;
+              final templateKey = type == 'game'
+                  ? keyGameTemplate
+                  : keyAnimeTemplate;
               final List<String> template = List<String>.from(
-                Hive.box(boxSettings).get(keyTemplate) ??
-                    ['Геймплей', 'Сюжет', 'Графика', 'Оптимизация'],
+                Hive.box(boxTemplateSettings).get(templateKey),
               );
-              final newGame = {
-                'title': _titleController.text.trim(),
-                'genres': '',
+
+              final newItem = {
+                'type': type,
+                'title': _titleController.text,
+                'genres': <String>[],
                 'playTime': '',
+                'episodes': '',
                 'status': status,
                 'dateTime': DateTime.now().toString(),
                 'criteria': template
@@ -629,248 +386,139 @@ class _AddGameFormState extends State<AddGameForm> {
                 'notes': <String>[],
                 'finalOpinion': '',
               };
-              Hive.box(boxGames).add(newGame);
+              Hive.box(boxGames).add(newItem);
               Navigator.pop(context);
             },
-            child: const Text('Создать запись'),
+            child: const Text('Создать'),
           ),
           const SizedBox(height: 20),
         ],
       ),
     );
   }
-
-  Widget _statusButton(String s, IconData icon, Color color) {
-    final isSelected = status == s;
-    return Column(
-      children: [
-        IconButton(
-          icon: Icon(
-            icon,
-            color: isSelected ? color : Colors.grey,
-            size: isSelected ? 32 : 24,
-          ),
-          onPressed: () => setState(() => status = s),
-        ),
-        Text(
-          s == 'Like'
-              ? 'Нравится'
-              : (s == 'Dislike' ? 'Не нравится' : 'Нейтрально'),
-          style: TextStyle(
-            fontSize: 11,
-            color: isSelected ? color : Colors.grey,
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 // --- ЭКРАН ДЕТАЛЕЙ ---
-class GameDetailScreen extends StatefulWidget {
-  final dynamic gameData;
-  final int gameIndex;
-
-  const GameDetailScreen({
+class ReviewDetailScreen extends StatefulWidget {
+  final Map<String, dynamic> data;
+  final int index;
+  const ReviewDetailScreen({
     super.key,
-    required this.gameData,
-    required this.gameIndex,
+    required this.data,
+    required this.index,
   });
-
   @override
-  State<GameDetailScreen> createState() => _GameDetailScreenState();
+  State<ReviewDetailScreen> createState() => _ReviewDetailScreenState();
 }
 
-class _GameDetailScreenState extends State<GameDetailScreen> {
+class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
   late Map<String, dynamic> data;
-  final _noteController = TextEditingController();
-  late TextEditingController _playTimeController;
+  late TextEditingController _mainValController; // Для часов или серий
   late TextEditingController _finalOpinionController;
 
   @override
   void initState() {
     super.initState();
-    data = Map<String, dynamic>.from(widget.gameData);
-    // Обеспечиваем наличие всех полей
-    if (data['genres'] is String) {
-      data['genres'] = data['genres'].toString().isEmpty
-          ? <String>[]
-          : [data['genres'].toString()];
-    }
-    data['genres'] ??= <String>[];
-    data['playTime'] ??= '';
-    data['finalOpinion'] ??= '';
-    data['notes'] ??= <String>[];
-    data['criteria'] ??= [];
-
-    _playTimeController = TextEditingController(text: data['playTime']);
+    data = Map<String, dynamic>.from(widget.data);
+    _mainValController = TextEditingController(
+      text: data[data['type'] == 'anime' ? 'episodes' : 'playTime'],
+    );
     _finalOpinionController = TextEditingController(text: data['finalOpinion']);
   }
 
-  @override
-  void dispose() {
-    _noteController.dispose();
-    _playTimeController.dispose();
-    _finalOpinionController.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (widget.gameIndex >= 0) {
-      Hive.box(boxGames).putAt(widget.gameIndex, data);
-    }
-  }
+  void _save() => Hive.box(boxGames).putAt(widget.index, data);
 
   @override
   Widget build(BuildContext context) {
+    final isAnime = data['type'] == 'anime';
     return Scaffold(
-      appBar: AppBar(
-        title: Text(data['title']),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete, color: Colors.redAccent),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Удалить игру?'),
-                  content: Text('«${data['title']}» будет удалена.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Отмена'),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Hive.box(boxGames).deleteAt(widget.gameIndex);
-                        Navigator.pop(ctx);
-                        Navigator.pop(context);
-                      },
-                      child: const Text(
-                        'Удалить',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
+      appBar: AppBar(title: Text(data['title'])),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _buildInfoCard(),
+            _buildInfoCard(isAnime),
             const SizedBox(height: 20),
             _buildCriteriaSection(),
             const SizedBox(height: 20),
             _buildNotesSection(),
             const SizedBox(height: 20),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                "Финальный вердикт",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
+            const Text(
+              "Вердикт",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
             TextField(
-              maxLines: 4,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Итоги прохождения...',
-              ),
+              maxLines: 3,
               controller: _finalOpinionController,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
               onChanged: (v) {
                 data['finalOpinion'] = v;
                 _save();
               },
             ),
-            const SizedBox(height: 50),
+            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoCard() {
+  Widget _buildInfoCard(bool isAnime) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            // Статус
             Row(
-              children: [
-                const Text('Оценка: '),
-                const SizedBox(width: 8),
-                ...['Like', 'Neutral', 'Dislike'].map((s) {
-                  final icons = {
-                    'Like': Icons.sentiment_very_satisfied,
-                    'Neutral': Icons.sentiment_neutral,
-                    'Dislike': Icons.sentiment_very_dissatisfied,
-                  };
-                  final colors = {
-                    'Like': Colors.greenAccent,
-                    'Neutral': Colors.orangeAccent,
-                    'Dislike': Colors.redAccent,
-                  };
-                  final isSelected = data['status'] == s;
-                  return IconButton(
-                    icon: Icon(
-                      icons[s],
-                      color: isSelected ? colors[s] : Colors.grey,
-                      size: isSelected ? 28 : 22,
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: ['Like', 'Neutral', 'Dislike']
+                  .map(
+                    (s) => IconButton(
+                      icon: Icon(
+                        s == 'Like'
+                            ? Icons.thumb_up
+                            : (s == 'Dislike'
+                                  ? Icons.thumb_down
+                                  : Icons.sentiment_neutral),
+                      ),
+                      color: data['status'] == s ? Colors.cyan : Colors.grey,
+                      onPressed: () => setState(() {
+                        data['status'] = s;
+                        _save();
+                      }),
                     ),
-                    onPressed: () {
-                      setState(() => data['status'] = s);
-                      _save();
-                    },
-                  );
-                }),
-              ],
+                  )
+                  .toList(),
             ),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                "Жанры:",
-                style: TextStyle(fontSize: 14, color: Colors.grey),
+            TextField(
+              controller: _mainValController,
+              decoration: InputDecoration(
+                labelText: isAnime ? 'Количество серий' : 'Время прохождения',
+                prefixIcon: Icon(isAnime ? Icons.repeat : Icons.timer),
               ),
+              onChanged: (v) {
+                data[isAnime ? 'episodes' : 'playTime'] = v;
+                _save();
+              },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
-              runSpacing: 0,
               children: [
                 ...List<String>.from(data['genres']).map(
-                  (genre) => InputChip(
-                    label: Text(genre),
+                  (g) => InputChip(
+                    label: Text(g),
                     onDeleted: () {
-                      setState(() => data['genres'].remove(genre));
+                      setState(() => data['genres'].remove(g));
                       _save();
                     },
                   ),
                 ),
                 ActionChip(
-                  avatar: const Icon(Icons.add, size: 18),
-                  label: const Text("Добавить"),
-                  onPressed: () => _showGenrePicker(context),
+                  label: const Text('+ Жанр'),
+                  onPressed: _showGenrePicker,
                 ),
               ],
-            ),
-            const Divider(),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Время прохождения',
-                prefixIcon: Icon(Icons.timer),
-              ),
-              controller: _playTimeController,
-              onChanged: (v) {
-                data['playTime'] = v;
-                _save();
-              },
             ),
           ],
         ),
@@ -878,109 +526,58 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
     );
   }
 
-  void _showGenrePicker(BuildContext context) {
+  void _showGenrePicker() {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) {
-        final currentGenres = List<String>.from(data['genres']);
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  "Выберите жанр",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
+      builder: (ctx) => ListView(
+        children: allAvailableGenres
+            .map(
+              (g) => ListTile(
+                title: Text(g),
+                onTap: () {
+                  if (!data['genres'].contains(g))
+                    setState(() => data['genres'].add(g));
+                  _save();
+                  Navigator.pop(ctx);
+                },
               ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: allAvailableGenres.map((genre) {
-                    final isSelected = currentGenres.contains(genre);
-                    return ListTile(
-                      title: Text(genre),
-                      trailing: isSelected
-                          ? const Icon(Icons.check, color: Colors.cyan)
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          if (isSelected) {
-                            data['genres'].remove(genre);
-                          } else {
-                            data['genres'].add(genre);
-                          }
-                        });
-                        _save();
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  }).toList(),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+            )
+            .toList(),
+      ),
     );
   }
 
   Widget _buildCriteriaSection() {
-    final criteria = List<dynamic>.from(data['criteria'] ?? []);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          "Критерии",
+          "Оценки",
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 8),
-        ...List.generate(criteria.length, (index) {
-          final c = criteria[index];
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    c['name'] ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  TextField(
-                    decoration: const InputDecoration(
-                      hintText: '...',
-                      border: InputBorder.none,
+        ...List.generate(
+          data['criteria'].length,
+          (i) => ListTile(
+            title: Text(data['criteria'][i]['name']),
+            subtitle: TextField(
+              controller:
+                  TextEditingController(text: data['criteria'][i]['score'])
+                    ..selection = TextSelection.collapsed(
+                      offset: data['criteria'][i]['score'].length,
                     ),
-                    controller: TextEditingController(text: c['score'] ?? '')
-                      ..selection = TextSelection.collapsed(
-                        offset: (c['score'] ?? '').length,
-                      ),
-                    onChanged: (v) {
-                      data['criteria'][index]['score'] = v;
-                      _save();
-                    },
-                  ),
-                ],
-              ),
+              onChanged: (v) {
+                data['criteria'][i]['score'] = v;
+                _save();
+              },
             ),
-          );
-        }),
-        TextButton.icon(
-          onPressed: () => setState(() {
-            data['criteria'].add({'name': 'Новый критерий', 'score': ''});
-            _save();
-          }),
-          icon: const Icon(Icons.add),
-          label: const Text("Добавить критерий"),
+          ),
         ),
       ],
     );
   }
 
   Widget _buildNotesSection() {
-    final notes = List<String>.from(data['notes'] ?? []);
+    final controller = TextEditingController();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -988,48 +585,124 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
           "Заметки",
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 8),
-        ...notes.asMap().entries.map((entry) {
-          final note = entry.value;
-          return Dismissible(
-            key: Key('note_${entry.key}_$note'),
-            direction: DismissDirection.endToStart,
-            background: Container(
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.only(right: 16),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
+        ...data['notes'].map(
+          (n) => Card(
+            child: ListTile(
+              title: Text(n),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => setState(() {
+                  data['notes'].remove(n);
+                  _save();
+                }),
               ),
-              child: const Icon(Icons.delete_outline, color: Colors.red),
             ),
-            onDismissed: (_) {
-              setState(() => data['notes'].removeAt(entry.key));
-              _save();
-            },
-            child: Card(child: ListTile(title: Text(note))),
-          );
-        }),
-        const SizedBox(height: 8),
+          ),
+        ),
         TextField(
-          controller: _noteController,
+          controller: controller,
           decoration: InputDecoration(
             hintText: 'Добавить заметку...',
-            border: const OutlineInputBorder(),
             suffixIcon: IconButton(
               icon: const Icon(Icons.send),
               onPressed: () {
-                if (_noteController.text.trim().isEmpty) return;
-                setState(() {
-                  data['notes'].add(_noteController.text.trim());
-                  _noteController.clear();
-                });
+                if (controller.text.isEmpty) return;
+                setState(() => data['notes'].add(controller.text));
                 _save();
+                controller.clear();
               },
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+// --- НАСТРОЙКИ ШАБЛОНОВ (TABS) ---
+class TemplateSettingsScreen extends StatelessWidget {
+  const TemplateSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Настройка шаблонов'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Игры'),
+              Tab(text: 'Аниме'),
+            ],
+          ),
+        ),
+        body: const TabBarView(
+          children: [
+            TemplateEditor(templateKey: keyGameTemplate),
+            TemplateEditor(templateKey: keyAnimeTemplate),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TemplateEditor extends StatefulWidget {
+  final String templateKey;
+  const TemplateEditor({super.key, required this.templateKey});
+  @override
+  State<TemplateEditor> createState() => _TemplateEditorState();
+}
+
+class _TemplateEditorState extends State<TemplateEditor> {
+  late List<String> criteria;
+  @override
+  void initState() {
+    super.initState();
+    criteria = List<String>.from(
+      Hive.box(boxTemplateSettings).get(widget.templateKey),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: criteria.length + 1,
+      itemBuilder: (context, i) {
+        if (i == criteria.length) {
+          return ElevatedButton.icon(
+            onPressed: () => setState(() {
+              criteria.add('Новый критерий');
+              Hive.box(boxTemplateSettings).put(widget.templateKey, criteria);
+            }),
+            icon: const Icon(Icons.add),
+            label: const Text('Добавить'),
+          );
+        }
+        return Card(
+          child: ListTile(
+            title: TextField(
+              controller: TextEditingController(text: criteria[i])
+                ..selection = TextSelection.collapsed(
+                  offset: criteria[i].length,
+                ),
+              onChanged: (v) {
+                criteria[i] = v;
+                Hive.box(boxTemplateSettings).put(widget.templateKey, criteria);
+              },
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () => setState(() {
+                criteria.removeAt(i);
+                Hive.box(boxTemplateSettings).put(widget.templateKey, criteria);
+              }),
+            ),
+          ),
+        );
+      },
     );
   }
 }
