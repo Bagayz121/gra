@@ -1,5 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 // --- КОНСТАНТЫ ---
 const String boxGames = 'games_box';
@@ -28,6 +34,52 @@ const List<String> allAvailableGenres = [
   'Sci-Fi',
   'Fantasy',
 ];
+
+enum ReviewType {
+  game(
+    label: 'Игра',
+    icon: Icons.videogame_asset,
+    templateKey: keyGameTemplate,
+    unit: 'ч.',
+  ),
+  anime(
+    label: 'Аниме',
+    icon: Icons.tv,
+    templateKey: keyAnimeTemplate,
+    unit: 'сер.',
+  ),
+  manga(
+    label: 'Манга',
+    icon: Icons.library_books,
+    templateKey: keyMangaTemplate,
+    unit: 'гл.',
+  ),
+  movie(
+    label: 'Фильм',
+    icon: Icons.movie,
+    templateKey: keyGameTemplate,
+    unit: 'мин.',
+  );
+
+  final String label;
+  final IconData icon;
+  final String templateKey;
+  final String unit;
+
+  const ReviewType({
+    required this.label,
+    required this.icon,
+    required this.templateKey,
+    required this.unit,
+  });
+}
+
+ReviewType getReviewType(dynamic type) {
+  return ReviewType.values.firstWhere(
+    (e) => e.name == type,
+    orElse: () => ReviewType.game,
+  );
+}
 
 IconData iconByType(String type) {
   return type == 'game'
@@ -90,6 +142,128 @@ void main() async {
   }
 
   runApp(const GameReviewApp());
+}
+
+// --- СЕРВИС ЭКСПОРТА / ИМПОРТА ---
+class BackupService {
+  static Future<void> exportDatabase(BuildContext context) async {
+    final gamesBox = Hive.box(boxGames);
+    final settingsBox = Hive.box(boxTemplateSettings);
+
+    final backup = {
+      'reviews': gamesBox.values.toList(),
+      'templates': {
+        keyGameTemplate: settingsBox.get(keyGameTemplate),
+        keyAnimeTemplate: settingsBox.get(keyAnimeTemplate),
+        keyMangaTemplate: settingsBox.get(keyMangaTemplate),
+      },
+    };
+
+    final String jsonString = jsonEncode(backup);
+
+    try {
+      if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+        // --- ЛОГИКА ДЛЯ ПК ---
+        String? outputFile = await FilePicker.platform.saveFile(
+          dialogTitle: 'Выберите место для сохранения бэкапа',
+          fileName: 'reviewer_backup.json',
+          type: FileType.custom,
+          allowedExtensions: ['json'],
+        );
+
+        if (outputFile != null) {
+          final file = File(outputFile);
+          await file.writeAsString(jsonString);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Бэкап успешно сохранен!')),
+          );
+        }
+      } else {
+        // --- ЛОГИКА ДЛЯ МОБИЛОК ---
+        final directory = await getTemporaryDirectory();
+        final file = File('${directory.path}/reviewer_backup.json');
+        await file.writeAsString(jsonString);
+
+        await Share.shareXFiles([XFile(file.path)], text: 'Бэкап моих отзывов');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка экспорта: $e')));
+    }
+  }
+
+  static Future<void> importDatabase(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final String jsonString = await file.readAsString();
+        final Map<String, dynamic> backup = jsonDecode(jsonString);
+
+        final gamesBox = Hive.box(boxGames);
+        final settingsBox = Hive.box(boxTemplateSettings);
+
+        // Очистка и замена данных
+        await gamesBox.clear();
+        await gamesBox.addAll(backup['reviews']);
+
+        if (backup['templates'] != null) {
+          backup['templates'].forEach((key, value) {
+            settingsBox.put(key, value);
+          });
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Данные успешно импортированы!')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка импорта: $e')));
+    }
+  }
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Настройки')),
+      body: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.download),
+            title: const Text('Экспортировать базу'),
+            subtitle: const Text('Сохранить все отзывы в JSON файл'),
+            onTap: () => BackupService.exportDatabase(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.upload),
+            title: const Text('Импортировать базу'),
+            subtitle: const Text('Восстановить отзывы из файла'),
+            onTap: () => BackupService.importDatabase(context),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: Colors.red),
+            title: const Text(
+              'Очистить всё',
+              style: TextStyle(color: Colors.red),
+            ),
+            onTap: () {},
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class GameReviewApp extends StatelessWidget {
@@ -160,6 +334,72 @@ class _MainScreenState extends State<MainScreen> {
     return result;
   }
 
+  void _showContextMenu(BuildContext context, int realIndex, String title) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text(
+                  'Удалить отзыв',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.pop(context); // Закрываем меню
+                  _confirmDelete(
+                    context,
+                    realIndex,
+                    title,
+                  ); // Показываем подтверждение
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _confirmDelete(BuildContext context, int index, String title) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удаление'),
+        content: Text('Вы уверены, что хотите удалить "$title"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              gamesBox.deleteAt(index);
+              Navigator.pop(ctx);
+            },
+            child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -177,6 +417,13 @@ class _MainScreenState extends State<MainScreen> {
           IconButton(
             icon: Icon(isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () => setState(() => isGridView = !isGridView),
+          ),
+          IconButton(
+            icon: Icon(Icons.settings),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (c) => const SettingsScreen()),
+            ),
           ),
         ],
         bottom: PreferredSize(
@@ -238,6 +485,8 @@ class _MainScreenState extends State<MainScreen> {
                     ReviewDetailScreen(data: item, index: realIndex),
               ),
             ),
+            onLongPress: () =>
+                _showContextMenu(context, realIndex, item['title']),
             leading: Icon(iconByType(type), color: Colors.cyan),
             title: Text(item['title']),
             subtitle: Text(
