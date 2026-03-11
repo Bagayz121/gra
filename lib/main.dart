@@ -15,6 +15,9 @@ const String boxSetetings = 'app_settings_box';
 const String keyGameTemplate = 'default_criteria_game';
 const String keyAnimeTemplate = 'default_criteria_anime';
 const String keyMangaTemplate = 'default_criteria_manga';
+const String keyFilmTemplate = 'default_criteria_film';
+const String keyMusicTemplate = 'default_criteria_music';
+const String keyVideoTemplate = 'default_criteria_video';
 
 const List<String> allAvailableGenres = [
   'Action',
@@ -37,40 +40,84 @@ const List<String> allAvailableGenres = [
 
 enum ReviewType {
   game(
+    value: 'game',
     label: 'Игра',
     icon: Icons.videogame_asset,
     templateKey: keyGameTemplate,
+    dataKey: 'playTime',
     unit: 'ч.',
+    unitString: 'Время прохождения',
+    unitIcon: Icons.repeat,
   ),
   anime(
+    value: 'anime',
     label: 'Аниме',
     icon: Icons.tv,
     templateKey: keyAnimeTemplate,
+    dataKey: 'episodes',
     unit: 'сер.',
+    unitString: 'Количество серий',
+    unitIcon: Icons.numbers,
   ),
   manga(
+    value: 'manga',
     label: 'Манга',
     icon: Icons.library_books,
     templateKey: keyMangaTemplate,
+    dataKey: 'chapters',
     unit: 'гл.',
+    unitString: 'Количество глав',
+    unitIcon: Icons.numbers,
   ),
   movie(
+    value: 'movie',
     label: 'Фильм',
     icon: Icons.movie,
-    templateKey: keyGameTemplate,
+    templateKey: keyFilmTemplate,
+    dataKey: 'length',
     unit: 'мин.',
+    unitString: 'Длительность',
+    unitIcon: Icons.timer,
+  ),
+  music(
+    value: 'music',
+    label: 'Трек',
+    icon: Icons.music_note,
+    templateKey: keyMusicTemplate,
+    dataKey: 'length',
+    unit: 'мин.',
+    unitString: 'Длительность',
+    unitIcon: Icons.timer,
+  ),
+  video(
+    value: 'video',
+    label: 'Видео',
+    icon: Icons.video_camera_front,
+    templateKey: keyVideoTemplate,
+    dataKey: 'url',
+    unit: '',
+    unitString: 'Ссылка',
+    unitIcon: Icons.link,
   );
 
+  final String value;
   final String label;
   final IconData icon;
   final String templateKey;
+  final String dataKey;
   final String unit;
+  final String unitString;
+  final IconData unitIcon;
 
   const ReviewType({
+    required this.value,
     required this.label,
     required this.icon,
     required this.templateKey,
+    required this.dataKey,
     required this.unit,
+    required this.unitString,
+    required this.unitIcon,
   });
 }
 
@@ -79,12 +126,6 @@ ReviewType getReviewType(dynamic type) {
     (e) => e.name == type,
     orElse: () => ReviewType.game,
   );
-}
-
-IconData iconByType(String type) {
-  return type == 'game'
-      ? Icons.videogame_asset
-      : (type == 'anime' ? Icons.tv : Icons.library_books);
 }
 
 // Миграция для старых данных
@@ -140,6 +181,15 @@ void main() async {
   if (settings.get(keyMangaTemplate) == null) {
     settings.put(keyMangaTemplate, ['Рисовка', 'Сюжет', 'Персонажи', 'Звук']);
   }
+  if (settings.get(keyFilmTemplate) == null) {
+    settings.put(keyFilmTemplate, ['Картинка', 'Сюжет', 'Персонажи', 'Звук']);
+  }
+  if (settings.get(keyMusicTemplate) == null) {
+    settings.put(keyMusicTemplate, ['Вайб']);
+  }
+  if (settings.get(keyVideoTemplate) == null) {
+    settings.put(keyVideoTemplate, ['Смысл']);
+  }
 
   runApp(const GameReviewApp());
 }
@@ -156,6 +206,9 @@ class BackupService {
         keyGameTemplate: settingsBox.get(keyGameTemplate),
         keyAnimeTemplate: settingsBox.get(keyAnimeTemplate),
         keyMangaTemplate: settingsBox.get(keyMangaTemplate),
+        keyFilmTemplate: settingsBox.get(keyFilmTemplate),
+        keyMusicTemplate: settingsBox.get(keyMusicTemplate),
+        keyVideoTemplate: settingsBox.get(keyVideoTemplate),
       },
     };
 
@@ -475,7 +528,7 @@ class _MainScreenState extends State<MainScreen> {
       itemBuilder: (context, index) {
         final item = Map<String, dynamic>.from(items[index]);
         final realIndex = all.indexOf(items[index]);
-        final String type = item['type'];
+        final ReviewType type = getReviewType(item['type']);
         return Card(
           child: ListTile(
             onTap: () => Navigator.push(
@@ -487,11 +540,11 @@ class _MainScreenState extends State<MainScreen> {
             ),
             onLongPress: () =>
                 _showContextMenu(context, realIndex, item['title']),
-            leading: Icon(iconByType(type), color: Colors.cyan),
+            leading: Icon(type.icon, color: Colors.cyan),
             title: Text(item['title']),
-            subtitle: Text(
-              "${type == 'anime' ? 'Аниме' : (type == 'game' ? 'Игра' : 'Манга')} • ${type == 'anime' ? (item['episodes'] ?? '0') + ' сер.' : (type == 'game' ? (item['playTime'] ?? '0 ч.') : (item['chapters'] ?? '0') + ' гл.')}",
-            ),
+            subtitle: item[type.dataKey] == ''
+                ? Text(type.name)
+                : Text("${type.name} • ${item[type.dataKey]} ${type.unit}"),
             trailing: _getStatusIcon(item['status']),
           ),
         );
@@ -512,6 +565,7 @@ class _MainScreenState extends State<MainScreen> {
       itemBuilder: (context, index) {
         final item = Map<String, dynamic>.from(items[index]);
         final realIndex = all.indexOf(items[index]);
+        final ReviewType type = getReviewType(item['type']);
         return InkWell(
           onTap: () => Navigator.push(
             context,
@@ -528,7 +582,7 @@ class _MainScreenState extends State<MainScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(iconByType(item['type']), size: 40, color: Colors.cyan),
+                Icon(type.icon, size: 40, color: Colors.cyan),
                 const Spacer(),
                 Text(
                   item['title'],
@@ -590,23 +644,15 @@ class _AddReviewFormState extends State<AddReviewForm> {
         mainAxisSize: MainAxisSize.min,
         children: [
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
-                value: 'game',
-                label: Text('Игра'),
-                icon: Icon(Icons.videogame_asset),
-              ),
-              ButtonSegment(
-                value: 'anime',
-                label: Text('Аниме'),
-                icon: Icon(Icons.tv),
-              ),
-              ButtonSegment(
-                value: 'manga',
-                label: Text('Манга'),
-                icon: Icon(Icons.library_books),
-              ),
-            ],
+            segments: ReviewType.values
+                .map(
+                  (rt) => ButtonSegment(
+                    value: rt.value,
+                    label: Text(rt.label),
+                    icon: Icon(rt.icon),
+                  ),
+                )
+                .toList(),
             selected: {type},
             onSelectionChanged: (val) => setState(() => type = val.first),
           ),
@@ -622,9 +668,7 @@ class _AddReviewFormState extends State<AddReviewForm> {
             ),
             onPressed: () {
               if (_titleController.text.isEmpty) return;
-              final templateKey = type == 'game'
-                  ? keyGameTemplate
-                  : (type == 'anime' ? keyAnimeTemplate : keyMangaTemplate);
+              final templateKey = getReviewType(type).templateKey;
               final List<String> template = List<String>.from(
                 Hive.box(boxTemplateSettings).get(templateKey),
               );
@@ -636,6 +680,8 @@ class _AddReviewFormState extends State<AddReviewForm> {
                 'playTime': '',
                 'episodes': '',
                 'chapters': '',
+                'url': '',
+                'length': '',
                 'status': status,
                 'dateTime': DateTime.now().toString(),
                 'criteria': template
@@ -678,12 +724,8 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
   void initState() {
     super.initState();
     data = Map<String, dynamic>.from(widget.data);
-    _mainValController = TextEditingController(
-      text:
-          data[data['type'] == 'anime'
-              ? 'episodes'
-              : (data['type'] == 'game' ? 'playTime' : 'chapters')],
-    );
+    final ReviewType type = getReviewType(data['type']);
+    _mainValController = TextEditingController(text: data[type.dataKey]);
     _finalOpinionController = TextEditingController(text: data['finalOpinion']);
   }
 
@@ -723,7 +765,8 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
     );
   }
 
-  Widget _buildInfoCard(String type) {
+  Widget _buildInfoCard(String typeStr) {
+    final ReviewType type = getReviewType(typeStr);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -753,22 +796,11 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
             TextField(
               controller: _mainValController,
               decoration: InputDecoration(
-                labelText: type == 'anime'
-                    ? 'Количество серий'
-                    : (type == 'game'
-                          ? 'Время прохождения'
-                          : 'Количество глав'),
-                prefixIcon: Icon(
-                  type == 'anime' || type == 'manga'
-                      ? Icons.repeat
-                      : Icons.timer,
-                ),
+                labelText: type.unitString,
+                prefixIcon: Icon(type.unitIcon),
               ),
               onChanged: (v) {
-                data[type == 'anime'
-                        ? 'episodes'
-                        : (type == 'game' ? 'playTime' : 'chapters')] =
-                    v;
+                data[type.dataKey] = v;
                 _save();
               },
             ),
@@ -896,26 +928,20 @@ class TemplateSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final List<Tab> tabs = ReviewType.values
+        .map((rt) => Tab(text: rt.label))
+        .toList();
+    final List<TemplateEditor> templateEditors = ReviewType.values
+        .map((rt) => TemplateEditor(templateKey: rt.templateKey))
+        .toList();
     return DefaultTabController(
-      length: 3,
+      length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Настройка шаблонов'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Игры'),
-              Tab(text: 'Аниме'),
-              Tab(text: 'Манга'),
-            ],
-          ),
+          bottom: TabBar(tabs: tabs),
         ),
-        body: const TabBarView(
-          children: [
-            TemplateEditor(templateKey: keyGameTemplate),
-            TemplateEditor(templateKey: keyAnimeTemplate),
-            TemplateEditor(templateKey: keyMangaTemplate),
-          ],
-        ),
+        body: TabBarView(children: templateEditors),
       ),
     );
   }
