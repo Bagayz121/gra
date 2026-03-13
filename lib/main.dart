@@ -782,18 +782,21 @@ class _AddReviewFormState extends State<AddReviewForm> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SegmentedButton<String>(
-            segments: ReviewType.values
-                .map(
-                  (rt) => ButtonSegment(
-                    value: rt.value,
-                    label: Text(rt.label),
-                    icon: Icon(rt.icon),
-                  ),
-                )
-                .toList(),
-            selected: {type},
-            onSelectionChanged: (val) => setState(() => type = val.first),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              segments: ReviewType.values
+                  .map(
+                    (rt) => ButtonSegment(
+                      value: rt.value,
+                      label: Text(rt.label),
+                      icon: Icon(rt.icon),
+                    ),
+                  )
+                  .toList(),
+              selected: {type},
+              onSelectionChanged: (val) => setState(() => type = val.first),
+            ),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -999,20 +1002,52 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
         ),
         ...List.generate(
           data['criteria'].length,
-          (i) => ListTile(
-            title: Text(data['criteria'][i]['name']),
-            subtitle: TextField(
-              controller:
-                  TextEditingController(text: data['criteria'][i]['score'])
-                    ..selection = TextSelection.collapsed(
-                      offset: data['criteria'][i]['score'].length,
+          (i) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(data['criteria'][i]['name']),
+                const SizedBox(height: 4),
+                TextField(
+                  controller:
+                      TextEditingController(text: data['criteria'][i]['score'])
+                        ..selection = TextSelection.collapsed(
+                          offset: data['criteria'][i]['score'].length,
+                        ),
+                  maxLines: null,
+                  minLines: 1,
+                  expands: false,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-              onChanged: (v) {
-                data['criteria'][i]['score'] = v;
-                _save();
-              },
+                    border: const OutlineInputBorder(),
+                  ),
+                  onChanged: (v) {
+                    data['criteria'][i]['score'] = v;
+                    _save();
+                  },
+                ),
+              ],
             ),
           ),
+          // (i) => ListTile(
+          //   title: Text(data['criteria'][i]['name']),
+          //   subtitle: TextField(
+          //     controller:
+          //         TextEditingController(text: data['criteria'][i]['score'])
+          //           ..selection = TextSelection.collapsed(
+          //             offset: data['criteria'][i]['score'].length,
+          //           ),
+          //     onChanged: (v) {
+          //       data['criteria'][i]['score'] = v;
+          //       _save();
+          //     },
+          //   ),
+          // ),
         ),
       ],
     );
@@ -1078,7 +1113,12 @@ class TemplateSettingsScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Настройка шаблонов'),
-          bottom: TabBar(tabs: tabs),
+          bottom: TabBar(
+            tabs: tabs,
+            isScrollable: true,
+            indicatorSize: TabBarIndicatorSize.label,
+            labelPadding: EdgeInsets.symmetric(horizontal: 8),
+          ),
         ),
         body: TabBarView(children: templateEditors),
       ),
