@@ -12,14 +12,6 @@ const String boxGames = 'games_box';
 const String boxTemplateSettings = 'settings_box';
 const String boxSetetings = 'app_settings_box';
 
-const String keyGameTemplate = 'default_criteria_game';
-const String keyAnimeTemplate = 'default_criteria_anime';
-const String keyMangaTemplate = 'default_criteria_manga';
-const String keyFilmTemplate = 'default_criteria_film';
-const String keyMusicTemplate = 'default_criteria_music';
-const String keyVideoTemplate = 'default_criteria_video';
-const String keyBookTemplate = 'default_criteria_book';
-
 const List<String> allAvailableGenres = [
   'Action',
   'RPG',
@@ -44,7 +36,8 @@ enum ReviewType {
     value: 'game',
     label: 'Игра',
     icon: Icons.videogame_asset,
-    templateKey: keyGameTemplate,
+    templateKey: 'default_criteria_game',
+    defaultCriterias: ['Геймплей', 'Сюжет', 'Графика', 'Оптимизация', 'Звук'],
     dataKey: 'playTime',
     unit: 'ч.',
     unitString: 'Время прохождения',
@@ -54,7 +47,8 @@ enum ReviewType {
     value: 'anime',
     label: 'Аниме',
     icon: Icons.tv,
-    templateKey: keyAnimeTemplate,
+    templateKey: 'default_criteria_anime',
+    defaultCriterias: ['Анимация', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'episodes',
     unit: 'сер.',
     unitString: 'Количество серий',
@@ -64,7 +58,8 @@ enum ReviewType {
     value: 'manga',
     label: 'Манга',
     icon: Icons.library_books,
-    templateKey: keyMangaTemplate,
+    templateKey: 'default_criteria_manga',
+    defaultCriterias: ['Рисовка', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'chapters',
     unit: 'гл.',
     unitString: 'Количество глав',
@@ -74,7 +69,8 @@ enum ReviewType {
     value: 'book',
     label: 'Книга',
     icon: Icons.book,
-    templateKey: keyBookTemplate,
+    templateKey: 'default_criteria_book',
+    defaultCriterias: ['Смысл', 'Стиль'],
     dataKey: 'readTime',
     unit: 'дн.',
     unitString: 'Время прочтения',
@@ -84,7 +80,8 @@ enum ReviewType {
     value: 'movie',
     label: 'Фильм',
     icon: Icons.movie,
-    templateKey: keyFilmTemplate,
+    templateKey: 'default_criteria_film',
+    defaultCriterias: ['Картинка', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'length',
     unit: 'мин.',
     unitString: 'Длительность',
@@ -94,7 +91,8 @@ enum ReviewType {
     value: 'music',
     label: 'Трек',
     icon: Icons.music_note,
-    templateKey: keyMusicTemplate,
+    templateKey: 'default_criteria_music',
+    defaultCriterias: ['Вайб', 'Смысл', 'Стиль', 'Текст'],
     dataKey: 'length',
     unit: 'мин.',
     unitString: 'Длительность',
@@ -104,7 +102,8 @@ enum ReviewType {
     value: 'video',
     label: 'Видео',
     icon: Icons.video_camera_front,
-    templateKey: keyVideoTemplate,
+    templateKey: 'default_criteria_video',
+    defaultCriterias: ['Смысл'],
     dataKey: 'url',
     unit: '',
     unitString: 'Ссылка',
@@ -116,6 +115,7 @@ enum ReviewType {
   final IconData icon;
   final String templateKey;
   final String dataKey;
+  final List<String> defaultCriterias;
   final String unit;
   final String unitString;
   final IconData unitIcon;
@@ -126,6 +126,7 @@ enum ReviewType {
     required this.icon,
     required this.templateKey,
     required this.dataKey,
+    required this.defaultCriterias,
     required this.unit,
     required this.unitString,
     required this.unitIcon,
@@ -178,31 +179,11 @@ void main() async {
   await migrateData();
 
   final settings = Hive.box(boxTemplateSettings);
-  if (settings.get(keyGameTemplate) == null) {
-    settings.put(keyGameTemplate, [
-      'Геймплей',
-      'Сюжет',
-      'Графика',
-      'Оптимизация',
-    ]);
-  }
-  if (settings.get(keyAnimeTemplate) == null) {
-    settings.put(keyAnimeTemplate, ['Анимация', 'Сюжет', 'Персонажи', 'Звук']);
-  }
-  if (settings.get(keyMangaTemplate) == null) {
-    settings.put(keyMangaTemplate, ['Рисовка', 'Сюжет', 'Персонажи', 'Звук']);
-  }
-  if (settings.get(keyFilmTemplate) == null) {
-    settings.put(keyFilmTemplate, ['Картинка', 'Сюжет', 'Персонажи', 'Звук']);
-  }
-  if (settings.get(keyMusicTemplate) == null) {
-    settings.put(keyMusicTemplate, ['Вайб']);
-  }
-  if (settings.get(keyVideoTemplate) == null) {
-    settings.put(keyVideoTemplate, ['Смысл']);
-  }
-  if (settings.get(keyBookTemplate) == null) {
-    settings.put(keyBookTemplate, ['Смысл', 'Стиль']);
+
+  for (var rt in ReviewType.values) {
+    if (settings.get(rt.templateKey) == null) {
+      settings.put(rt.templateKey, rt.defaultCriterias);
+    }
   }
 
   runApp(const GameReviewApp());
@@ -217,12 +198,8 @@ class BackupService {
     final backup = {
       'reviews': gamesBox.values.toList(),
       'templates': {
-        keyGameTemplate: settingsBox.get(keyGameTemplate),
-        keyAnimeTemplate: settingsBox.get(keyAnimeTemplate),
-        keyMangaTemplate: settingsBox.get(keyMangaTemplate),
-        keyFilmTemplate: settingsBox.get(keyFilmTemplate),
-        keyMusicTemplate: settingsBox.get(keyMusicTemplate),
-        keyVideoTemplate: settingsBox.get(keyVideoTemplate),
+        for (var type in ReviewType.values)
+          type.templateKey: settingsBox.get(type.templateKey),
       },
     };
 
