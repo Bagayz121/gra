@@ -284,6 +284,39 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         children: [
           ListTile(
+            leading: const Icon(Icons.backup_table),
+            title: const Text('Бэкап и восстановление'),
+            subtitle: const Text('Экспорт/импорт базы данных'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (c) => const BackupSettingsScreen()),
+            ),
+          ),
+          const Divider(),
+        ],
+      ),
+    );
+  }
+}
+
+// --- ЭКРАН НАСТРОЕК БЭКАПА ---
+class BackupSettingsScreen extends StatelessWidget {
+  const BackupSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Бэкап данных'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: ListView(
+        children: [
+          ListTile(
             leading: const Icon(Icons.download),
             title: const Text('Экспортировать базу'),
             subtitle: const Text('Сохранить все отзывы в JSON файл'),
@@ -294,15 +327,6 @@ class SettingsScreen extends StatelessWidget {
             title: const Text('Импортировать базу'),
             subtitle: const Text('Восстановить отзывы из файла'),
             onTap: () => BackupService.importDatabase(context),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.delete_forever, color: Colors.red),
-            title: const Text(
-              'Очистить всё',
-              style: TextStyle(color: Colors.red),
-            ),
-            onTap: () {},
           ),
         ],
       ),
