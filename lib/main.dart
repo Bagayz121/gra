@@ -6,11 +6,12 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 // --- КОНСТАНТЫ ---
 const String boxGames = 'games_box';
 const String boxTemplateSettings = 'settings_box';
-const String boxSetetings = 'app_settings_box';
+const String boxSettings = 'app_settings_box';
 
 const List<String> allAvailableGenres = [
   'Action',
@@ -173,7 +174,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
   await Hive.openBox(boxGames);
-  await Hive.openBox(boxSetetings);
+  await Hive.openBox(boxSettings);
   await Hive.openBox(boxTemplateSettings);
 
   await migrateData();
@@ -186,28 +187,153 @@ void main() async {
     }
   }
 
+  _checkAutoBackup(settings);
+
   runApp(const GameReviewApp());
+}
+
+void _checkAutoBackup(Box settings) {
+  final String? path = settings.get(BackupService.keyBackupPath);
+  if (path == null || path.isEmpty) return;
+
+  final String? lastBackupStr = settings.get(BackupService.keyLastBackup);
+  final int interval = settings.get(
+    BackupService.keyBackupInterval,
+    defaultValue: 1,
+  );
+
+  if (lastBackupStr == null) {
+    // Если еще ни разу не делали, делаем первый
+    BackupService.performSilentBackup();
+  } else {
+    final DateTime lastDate = DateTime.parse(lastBackupStr);
+    final Duration difference = DateTime.now().difference(lastDate);
+
+    if (difference.inDays >= interval) {
+      BackupService.performSilentBackup();
+    }
+  }
 }
 
 // --- СЕРВИС ЭКСПОРТА / ИМПОРТА ---
 class BackupService {
-  static Future<void> exportDatabase(BuildContext context) async {
+  static const String keyBackupPath = 'auto_backup_path';
+  static const String keyBackupInterval = 'backup_interval'; // в днях
+  static const String keyLastBackup = 'last_backup_date';
+
+  static Map<String, dynamic> _createBackupData() {
     final gamesBox = Hive.box(boxGames);
     final settingsBox = Hive.box(boxTemplateSettings);
 
-    final backup = {
+    return {
       'reviews': gamesBox.values.toList(),
       'templates': {
         for (var type in ReviewType.values)
           type.templateKey: settingsBox.get(type.templateKey),
       },
+      'version': 1,
+      'date': DateTime.now().toIso8601String(),
     };
+  }
 
-    final String jsonString = jsonEncode(backup);
+  static Future<void> selectBackupDirectory(BuildContext context) async {
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+
+    if (selectedDirectory != null) {
+      final settingsBox = Hive.box(boxTemplateSettings);
+      await settingsBox.put(keyBackupPath, selectedDirectory);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Папка сохранена: $selectedDirectory')),
+      );
+    }
+  }
+
+  static Future<void> performSilentBackup() async {
+    final settingsBox = Hive.box(boxTemplateSettings);
+    final String? path = settingsBox.get(keyBackupPath);
+
+    if (path == null || path.isEmpty) return;
 
     try {
+      final backupData = _createBackupData();
+      final String jsonString = jsonEncode(backupData);
+
+      // Создаем имя файла с текущей датой
+      final String fileName =
+          'auto_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+      final file = File(p.join(path, fileName));
+
+      await file.writeAsString(jsonString);
+      await settingsBox.put(keyLastBackup, DateTime.now().toIso8601String());
+      // print("Авто-бэкап выполнен: ${file.path}");
+    } catch (e) {
+      // print("Ошибка авто-бэкапа: $e");
+    }
+  }
+
+  static Future<void> importLastBackup(BuildContext context) async {
+    final settingsBox = Hive.box(boxTemplateSettings);
+    final String? path = settingsBox.get(keyBackupPath);
+
+    if (path == null || path.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала выберите папку в настройках')),
+      );
+      return;
+    }
+
+    try {
+      final dir = Directory(path);
+      final List<FileSystemEntity> files = await dir.list().toList();
+
+      // Фильтруем только наши json файлы и сортируем по дате изменения
+      final backupFiles = files.where((f) => f.path.endsWith('.json')).toList()
+        ..sort(
+          (a, b) => b.statSync().modified.compareTo(a.statSync().modified),
+        );
+
+      if (backupFiles.isEmpty) {
+        throw 'В этой папке нет файлов бэкапа';
+      }
+
+      final file = File(backupFiles.first.path);
+      final String jsonString = await file.readAsString();
+      await _applyBackup(jsonString);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Данные успешно восстановлены из последнего файла!'),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка восстановления: $e')));
+    }
+  }
+
+  static Future<void> _applyBackup(String jsonString) async {
+    final Map<String, dynamic> backup = jsonDecode(jsonString);
+    final gamesBox = Hive.box(boxGames);
+    final settingsBox = Hive.box(boxTemplateSettings);
+
+    await gamesBox.clear();
+    await gamesBox.addAll(backup['reviews']);
+
+    if (backup['templates'] != null) {
+      backup['templates'].forEach((key, value) {
+        settingsBox.put(key, value);
+      });
+    }
+  }
+
+  static Future<void> exportDatabase(BuildContext context) async {
+    final String jsonString = jsonEncode(_createBackupData());
+    try {
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-        // --- ЛОГИКА ДЛЯ ПК ---
         String? outputFile = await FilePicker.platform.saveFile(
           dialogTitle: 'Выберите место для сохранения бэкапа',
           fileName: 'reviewer_backup.json',
@@ -216,24 +342,26 @@ class BackupService {
         );
 
         if (outputFile != null) {
-          final file = File(outputFile);
-          await file.writeAsString(jsonString);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Бэкап успешно сохранен!')),
-          );
+          await File(outputFile).writeAsString(jsonString);
+
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Бэкап сохранен!')));
         }
       } else {
-        // --- ЛОГИКА ДЛЯ МОБИЛОК ---
         final directory = await getTemporaryDirectory();
-        final file = File('${directory.path}/reviewer_backup.json');
+        final file = File('${directory.path}/backup.json');
         await file.writeAsString(jsonString);
-
-        await Share.shareXFiles([XFile(file.path)], text: 'Бэкап моих отзывов');
+        await SharePlus.instance.share(
+          ShareParams(text: 'Бэкап отзывов', files: [XFile(file.path)]),
+        );
       }
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка экспорта: $e')));
+      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
     }
   }
 
@@ -247,26 +375,16 @@ class BackupService {
       if (result != null && result.files.single.path != null) {
         final file = File(result.files.single.path!);
         final String jsonString = await file.readAsString();
-        final Map<String, dynamic> backup = jsonDecode(jsonString);
 
-        final gamesBox = Hive.box(boxGames);
-        final settingsBox = Hive.box(boxTemplateSettings);
+        await _applyBackup(jsonString);
 
-        // Очистка и замена данных
-        await gamesBox.clear();
-        await gamesBox.addAll(backup['reviews']);
-
-        if (backup['templates'] != null) {
-          backup['templates'].forEach((key, value) {
-            settingsBox.put(key, value);
-          });
-        }
-
+        if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Данные успешно импортированы!')),
         );
       }
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Ошибка импорта: $e')));
@@ -306,6 +424,8 @@ class BackupSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settingsBox = Hive.box(boxTemplateSettings);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Бэкап данных'),
@@ -314,44 +434,132 @@ class BackupSettingsScreen extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: ListView(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.file_copy),
-            title: const Text('Путь к автоматическому бэкапу'),
-            subtitle: const Text('Выберите место для сохранения бэкапа'),
-            onTap: () {},
+      body: ValueListenableBuilder(
+        valueListenable: settingsBox.listenable(),
+        builder: (context, box, _) {
+          final String backupPath = box.get(
+            BackupService.keyBackupPath,
+            defaultValue: 'Не выбран',
+          );
+          final String lastBackup = box.get(
+            BackupService.keyLastBackup,
+            defaultValue: 'Никогда',
+          );
+          final int interval = box.get(
+            BackupService.keyBackupInterval,
+            defaultValue: 1,
+          );
+
+          return ListView(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.folder_open),
+                title: const Text('Путь к автоматическому бэкапу'),
+                subtitle: Text(
+                  backupPath,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => BackupService.selectBackupDirectory(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.repeat),
+                title: const Text('Периодичность'),
+                subtitle: Text('Раз в $interval дн.'),
+                onTap: () async {
+                  // Простой диалог выбора интервала
+                  final int? selected = await showDialog<int>(
+                    context: context,
+                    builder: (c) => SimpleDialog(
+                      title: const Text('Как часто делать бэкап?'),
+                      children: [1, 3, 7, 30]
+                          .map(
+                            (days) => SimpleDialogOption(
+                              onPressed: () => Navigator.pop(c, days),
+                              child: Text('Раз в $days дн.'),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  );
+                  if (selected != null) {
+                    box.put(BackupService.keyBackupInterval, selected);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.save),
+                title: const Text('Сделать бэкап сейчас'),
+                subtitle: Text('Последний раз: $lastBackup'),
+                onTap: () async {
+                  if (box.get(BackupService.keyBackupPath) == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Сначала выберите папку')),
+                    );
+                  } else {
+                    await BackupService.performSilentBackup();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Бэкап успешно создан!')),
+                    );
+                  }
+                },
+              ),
+
+              ListTile(
+                leading: const Icon(Icons.restore_sharp),
+                title: const Text('Загрузить последний бэкап'),
+                subtitle: const Text('Автоматический поиск в выбранной папке'),
+                onTap: () => _confirmRestore(context),
+              ),
+
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  'Ручные операции',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+
+              ListTile(
+                leading: const Icon(Icons.download),
+                title: const Text('Экспортировать базу (Share)'),
+                subtitle: const Text('Отправить файл или сохранить вручную'),
+                onTap: () => BackupService.exportDatabase(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.upload),
+                title: const Text('Импортировать базу (File Picker)'),
+                subtitle: const Text('Выбрать файл вручную через проводник'),
+                onTap: () => BackupService.importDatabase(context),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _confirmRestore(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Восстановление данных'),
+        content: const Text(
+          'Текущие данные будут заменены данными из последнего файла бэкапа. Продолжить?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
           ),
-          ListTile(
-            leading: const Icon(Icons.repeat),
-            title: const Text('Время бэкапа'),
-            subtitle: const Text('Выберите время для автоматического бэкапа'),
-            onTap: () {},
-          ),
-          ListTile(
-            leading: const Icon(Icons.save),
-            title: const Text('Сделать бэкап'),
-            subtitle: const Text('Сохранить все отзывы в JSON файл'),
-            onTap: () {},
-          ),
-          ListTile(
-            leading: const Icon(Icons.restore_sharp),
-            title: const Text('Загрузить последний бэкап'),
-            subtitle: const Text('Восстановить отзывы из файла'),
-            onTap: () {},
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.download),
-            title: const Text('Экспортировать базу'),
-            subtitle: const Text('Сохранить все отзывы в JSON файл'),
-            onTap: () => BackupService.exportDatabase(context),
-          ),
-          ListTile(
-            leading: const Icon(Icons.upload),
-            title: const Text('Импортировать базу'),
-            subtitle: const Text('Восстановить отзывы из файла'),
-            onTap: () => BackupService.importDatabase(context),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              BackupService.importLastBackup(context);
+            },
+            child: const Text('Восстановить'),
           ),
         ],
       ),
