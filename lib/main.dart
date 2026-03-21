@@ -13,31 +13,22 @@ const String boxGames = 'games_box';
 const String boxTemplateSettings = 'settings_box';
 const String boxSettings = 'app_settings_box';
 
-const List<String> allAvailableGenres = [
-  'Action',
-  'RPG',
-  'Shooter',
-  'Adventure',
-  'OpenWorld',
-  'Metroidvania',
-  'Platformer',
-  'TBC',
-  'Indie',
-  'Strategy',
-  'Horror',
-  'Puzzle',
-  'Comedy',
-  'Drama',
-  'Sci-Fi',
-  'Fantasy',
-];
-
 enum ReviewType {
   game(
     value: 'game',
     label: 'Игра',
     icon: Icons.videogame_asset,
     templateKey: 'default_criteria_game',
+    genres: [
+      'Экшен',
+      'Ролевая',
+      'Стратегия',
+      'Приключения',
+      'Симулятор',
+      'Открытый мир',
+      'Платформер',
+      'Шутер',
+    ],
     defaultCriterias: ['Геймплей', 'Сюжет', 'Графика', 'Оптимизация', 'Звук'],
     dataKey: 'playTime',
     unit: 'ч.',
@@ -49,6 +40,7 @@ enum ReviewType {
     label: 'Аниме',
     icon: Icons.tv,
     templateKey: 'default_criteria_anime',
+    genres: ['Сёнен', 'Сёдзе', 'Сейнен'],
     defaultCriterias: ['Анимация', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'episodes',
     unit: 'сер.',
@@ -60,6 +52,7 @@ enum ReviewType {
     label: 'Манга',
     icon: Icons.library_books,
     templateKey: 'default_criteria_manga',
+    genres: ['Сёнен', 'Сёдзе', 'Сейнен'],
     defaultCriterias: ['Рисовка', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'chapters',
     unit: 'гл.',
@@ -71,6 +64,7 @@ enum ReviewType {
     label: 'Книга',
     icon: Icons.book,
     templateKey: 'default_criteria_book',
+    genres: ['Фантастика', 'Приключения', 'Детектив', 'Философия'],
     defaultCriterias: ['Смысл', 'Стиль'],
     dataKey: 'readTime',
     unit: 'дн.',
@@ -82,6 +76,7 @@ enum ReviewType {
     label: 'Фильм',
     icon: Icons.movie,
     templateKey: 'default_criteria_film',
+    genres: ['Экшен', 'Комедия', 'Драма'],
     defaultCriterias: ['Картинка', 'Сюжет', 'Персонажи', 'Звук'],
     dataKey: 'length',
     unit: 'мин.',
@@ -93,6 +88,7 @@ enum ReviewType {
     label: 'Трек',
     icon: Icons.music_note,
     templateKey: 'default_criteria_music',
+    genres: ['Рок', 'Поп', 'Электроника'],
     defaultCriterias: ['Вайб', 'Смысл', 'Стиль', 'Текст'],
     dataKey: 'length',
     unit: 'мин.',
@@ -103,6 +99,7 @@ enum ReviewType {
     value: 'video',
     label: 'Видео',
     icon: Icons.video_camera_front,
+    genres: ['Конфликт', 'Научпоп'],
     templateKey: 'default_criteria_video',
     defaultCriterias: ['Смысл'],
     dataKey: 'url',
@@ -116,6 +113,7 @@ enum ReviewType {
   final IconData icon;
   final String templateKey;
   final String dataKey;
+  final List<String> genres;
   final List<String> defaultCriterias;
   final String unit;
   final String unitString;
@@ -127,6 +125,7 @@ enum ReviewType {
     required this.icon,
     required this.templateKey,
     required this.dataKey,
+    required this.genres,
     required this.defaultCriterias,
     required this.unit,
     required this.unitString,
@@ -1252,10 +1251,12 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
   }
 
   void _showGenrePicker() {
+    final ReviewType type = getReviewType(data['type']);
+
     showModalBottomSheet(
       context: context,
       builder: (ctx) => ListView(
-        children: allAvailableGenres
+        children: type.genres
             .map(
               (g) => ListTile(
                 title: Text(g),
