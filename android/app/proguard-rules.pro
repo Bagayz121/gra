@@ -7,4 +7,11 @@
 -keep class io.flutter.** { *; }
 -keep class io.flutter.plugins.** { *; }
 
--keep class com.echoelysium.gra.** { *; }
+-keep class com.hivemq.** { *; }
+-keep class org.hive.** { *; }
+
+-keep class com.echoelysium.gra.models.** { *; }
+-dontwarn com.google.android.play.core.**
+
+-keep class io.flutter.embedding.android.FlutterPlayStoreSplitApplication { *; }
+-keep class io.flutter.embedding.engine.deferredcomponents.** { *; }
