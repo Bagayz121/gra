@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:archive/archive_io.dart';
 
 // --- КОНСТАНТЫ ---
 const String boxGames = 'games_box';
@@ -360,6 +361,34 @@ class BackupService {
     };
   }
 
+  static Future<Archive> _buildArchive() async {
+    final archive = Archive();
+
+    final backupData = _createBackupData();
+    final jsonBytes = utf8.encode(jsonEncode(backupData));
+    archive.addFile(ArchiveFile('data.json', jsonBytes.length, jsonBytes));
+
+    final postersPath = await ImageService._getPostersPath();
+    final postersDir = Directory(postersPath);
+
+    if (await postersDir.exists()) {
+      final List<FileSystemEntity> files = postersDir.listSync();
+      for (var file in files) {
+        if (file is File) {
+          final bytes = await file.readAsBytes();
+          archive.addFile(
+            ArchiveFile(
+              'posters/${p.basename(file.path)}',
+              bytes.length,
+              bytes,
+            ),
+          );
+        }
+      }
+    }
+    return archive;
+  }
+
   static Future<void> selectBackupDirectory(BuildContext context) async {
     String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
 
@@ -377,23 +406,22 @@ class BackupService {
   static Future<void> performSilentBackup() async {
     final settingsBox = Hive.box(boxTemplateSettings);
     final String? path = settingsBox.get(keyBackupPath);
-
     if (path == null || path.isEmpty) return;
 
     try {
-      final backupData = _createBackupData();
-      final String jsonString = jsonEncode(backupData);
+      final archive = await _buildArchive();
 
-      // Создаем имя файла с текущей датой
+      final zipEncoder = ZipEncoder();
+      final encodedZip = zipEncoder.encode(archive);
+
       final String fileName =
-          'auto_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+          'backup_${DateTime.now().millisecondsSinceEpoch}.zip';
       final file = File(p.join(path, fileName));
+      await file.writeAsBytes(encodedZip);
 
-      await file.writeAsString(jsonString);
       await settingsBox.put(keyLastBackup, DateTime.now().toIso8601String());
-      // print("Авто-бэкап выполнен: ${file.path}");
     } catch (e) {
-      // print("Ошибка авто-бэкапа: $e");
+      debugPrint("Ошибка архивации: $e");
     }
   }
 
@@ -410,82 +438,127 @@ class BackupService {
 
     try {
       final dir = Directory(path);
+      if (!await dir.exists()) throw 'Папка бэкапа не найдена';
+
       final List<FileSystemEntity> files = await dir.list().toList();
 
-      // Фильтруем только наши json файлы и сортируем по дате изменения
-      final backupFiles = files.where((f) => f.path.endsWith('.json')).toList()
+      final backupFiles = files.where((f) => f.path.endsWith('.zip')).toList()
         ..sort(
           (a, b) => b.statSync().modified.compareTo(a.statSync().modified),
         );
 
       if (backupFiles.isEmpty) {
-        throw 'В этой папке нет файлов бэкапа';
+        final oldJsonFiles = files
+            .where((f) => f.path.endsWith('.json'))
+            .toList();
+        if (oldJsonFiles.isNotEmpty) {
+          if (context.mounted)
+            _confirmOldFormatRestore(context, oldJsonFiles.first as File);
+          return;
+        }
+        throw 'В этой папке нет файлов бэкапа (.zip)';
       }
 
       final file = File(backupFiles.first.path);
-      final String jsonString = await file.readAsString();
-      await _applyBackup(jsonString);
+      final List<int> zipBytes = await file.readAsBytes();
+      await _applyBackupZip(zipBytes);
 
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Данные успешно восстановлены из последнего файла!'),
-        ),
+        SnackBar(content: Text('Восстановлено из: ${p.basename(file.path)}')),
       );
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Ошибка восстановления: $e')));
     }
   }
 
-  static Future<void> _applyBackup(String jsonString) async {
-    final Map<String, dynamic> backup = jsonDecode(jsonString);
-    final gamesBox = Hive.box(boxGames);
-    final settingsBox = Hive.box(boxTemplateSettings);
-
-    await gamesBox.clear();
-    await gamesBox.addAll(backup['reviews']);
-
-    if (backup['templates'] != null) {
-      backup['templates'].forEach((key, value) {
-        settingsBox.put(key, value);
-      });
-    }
+  // Вспомогательный метод для обработки старых JSON (если нужно)
+  static void _confirmOldFormatRestore(BuildContext context, File file) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Старый формат'),
+        content: const Text(
+          'Найден старый файл .json. Восстановить данные без картинок?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final String jsonString = await file.readAsString();
+              await _applyBackupJson(jsonString);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Данные (без фото) восстановлены'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Восстановить'),
+          ),
+        ],
+      ),
+    );
   }
 
   static Future<void> exportDatabase(BuildContext context) async {
-    final String jsonString = jsonEncode(_createBackupData());
     try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (c) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final archive = await _buildArchive();
+      final zipBytes = ZipEncoder().encode(archive);
+
+      if (context.mounted) Navigator.pop(context);
+
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
         String? outputFile = await FilePicker.platform.saveFile(
           dialogTitle: 'Выберите место для сохранения бэкапа',
-          fileName: 'reviewer_backup.json',
+          fileName: 'reviewer_backup.zip',
           type: FileType.custom,
-          allowedExtensions: ['json'],
+          allowedExtensions: ['zip'],
         );
 
         if (outputFile != null) {
-          await File(outputFile).writeAsString(jsonString);
-
+          await File(outputFile).writeAsBytes(zipBytes);
           if (!context.mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Бэкап сохранен!')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Бэкап (zip) успешно сохранен!')),
+          );
         }
       } else {
+        // Для мобилок
         final directory = await getTemporaryDirectory();
-        final file = File('${directory.path}/backup.json');
-        await file.writeAsString(jsonString);
+        final file = File('${directory.path}/backup.zip');
+        await file.writeAsBytes(zipBytes);
+
         await SharePlus.instance.share(
-          ShareParams(text: 'Бэкап отзывов', files: [XFile(file.path)]),
+          ShareParams(
+            text: 'Бэкап отзывов с картинками',
+            files: [XFile(file.path)],
+          ),
         );
       }
     } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+      if (context.mounted) {
+        try {
+          Navigator.pop(context);
+        } catch (_) {}
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка экспорта: $e')));
+      }
     }
   }
 
@@ -493,14 +566,19 @@ class BackupService {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['json'],
+        allowedExtensions: ['zip', 'json'],
       );
 
       if (result != null && result.files.single.path != null) {
         final file = File(result.files.single.path!);
-        final String jsonString = await file.readAsString();
 
-        await _applyBackup(jsonString);
+        if (file.path.endsWith('.zip')) {
+          final bytes = await file.readAsBytes();
+          await _applyBackupZip(bytes);
+        } else {
+          final String jsonString = await file.readAsString();
+          await _applyBackupJson(jsonString);
+        }
 
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -512,6 +590,50 @@ class BackupService {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Ошибка импорта: $e')));
+    }
+  }
+
+  static Future<void> _applyBackupZip(List<int> zipBytes) async {
+    final decoder = ZipDecoder();
+    final archive = decoder.decodeBytes(zipBytes);
+
+    final jsonFile = archive.findFile('data.json');
+    if (jsonFile == null) throw 'Файл data.json не найден внутри архива';
+
+    final String jsonString = utf8.decode(jsonFile.content);
+    final Map<String, dynamic> backup = jsonDecode(jsonString);
+
+    final gamesBox = Hive.box(boxGames);
+    final settingsBox = Hive.box(boxTemplateSettings);
+
+    await gamesBox.clear();
+    await gamesBox.addAll(backup['reviews']);
+
+    if (backup['templates'] != null) {
+      backup['templates'].forEach((k, v) => settingsBox.put(k, v));
+    }
+
+    final postersPath = await ImageService._getPostersPath();
+    for (final file in archive) {
+      if (file.isFile && file.name.startsWith('posters/')) {
+        final filename = p.basename(file.name);
+        final outFile = File(p.join(postersPath, filename));
+        await outFile.writeAsBytes(file.content);
+      }
+    }
+  }
+
+  // deprecated
+  static Future<void> _applyBackupJson(String jsonString) async {
+    final Map<String, dynamic> backup = jsonDecode(jsonString);
+    final gamesBox = Hive.box(boxGames);
+    final settingsBox = Hive.box(boxTemplateSettings);
+
+    await gamesBox.clear();
+    await gamesBox.addAll(backup['reviews']);
+
+    if (backup['templates'] != null) {
+      backup['templates'].forEach((k, v) => settingsBox.put(k, v));
     }
   }
 }
