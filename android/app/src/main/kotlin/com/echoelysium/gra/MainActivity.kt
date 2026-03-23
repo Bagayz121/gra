@@ -1,4 +1,4 @@
-package com.example.gra
+package com.echoelysium.gra
 
 import io.flutter.embedding.android.FlutterActivity
 
